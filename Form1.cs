@@ -13,15 +13,32 @@ namespace AHRSTEST
 {
     public partial class Form1 : Form
     {
+        enum Devices {Invensense, Actigraph, iPhone};
+
         double sampleFreq = 15.0f;
-        double beta = 0.041;
+        double beta = 100;
         double q0 = 1.0f, q1 = 0.0f, q2 = 0.0f, q3 = 0.0f;	// quaternion of sensor frame relative to auxiliary frame
         double Gx = 0, Gy = 0, Gz = 0;
         double QT0, QT1, QT2, QT3;
 
         double InvGravX, InvGravY, InvGravZ, CalcGravX, CalcGravY, CalcGravZ; /* GravX[0] -> Invensense, GravX[1] -> Calculated */
+
+        private void cmbDevices_SelectedIndexChanged(object sender, EventArgs e)
+        {
+
+        }
+
+        private void Form1_Load(object sender, EventArgs e)
+        {
+            cmbDevices.DataSource = System.Enum.GetValues(typeof(Devices));
+        }
+
         double InvRoll, InvPitch, InvYaw, CalcPitch, CalcRoll, CalcYaw;
         int AXCOL, AYCOL, AZCOL, GXCOL, GYCOL, GZCOL, MXCOL, MYCOL, MZCOL, Q0COL, Q1COL, Q2COL, Q3COL; /* Column Numbers. Switch between Actigraph and Shimmer */
+
+        Devices CurrentDevice;
+
+        StreamWriter QuatDebugger;
 
         public Form1()
         {
@@ -65,57 +82,78 @@ namespace AHRSTEST
             GravZ = R[2, 2];
         }
 
-        private void CalculateLinear(String[] values, out double lx, out double ly, out double lz)
+
+        private void OrientAxes(Devices DeviceID, ref double lx, ref double ly, ref double lz, ref double gx, ref double gy, ref double gz)
+        {
+            double temp = 0.00;
+
+            switch (DeviceID)
+            {
+                case Devices.Invensense:
+                    // Rotate Accelerations
+                    lz = -lz;
+                    temp = -lx;
+                    lx = -ly;
+                    ly = temp;
+                    // Rotate Gyroscope
+                    gz = -gz;
+                    temp = -gx;
+                    gx = gy;
+                    gy = temp;
+                    break;
+                case Devices.Actigraph: 
+                    // Rotate Acceleration
+                        lz = lz * -1;
+                        temp = -lx;
+                        lx = ly;
+                        ly = temp;
+                    // Rotate Angular Velocities
+                        gz = gz * -1;
+                        temp = -gx;
+                        gx = gy;
+                        gy = temp;
+                    break;
+                default: break;
+            }
+        }
+
+        /// <summary>
+        /// Calculates Linear Acceleration from Values provided from a CSV file
+        /// </summary>
+        /// <param name="values">String Array containing different values</param>
+        /// <param name="lx">Output lx</param>
+        /// <param name="ly">Output lx</param>
+        /// <param name="lz">Output lx</param>
+        /// <param name="CalculateQuaternion">Calculate Quaternion from values or use Invensense ones? 1 = Calculate them, 0 = Use Invensense </param>
+        private void CalculateLinear(String[] values, out double lx, out double ly, out double lz, Int16 CalculateQuaternion)
         {
 
-            Gx = double.Parse(values[GXCOL]);// * Math.PI / 180;
-            Gy = double.Parse(values[GYCOL]);// * Math.PI / 180;
-            Gz = double.Parse(values[GZCOL]);// * Math.PI / 180;
+            Gx = double.Parse(values[GXCOL]);
+            Gy = double.Parse(values[GYCOL]);
+            Gz = double.Parse(values[GZCOL]);
 
-            double Ax = double.Parse(values[AXCOL]);// * -1 ;
-            double Ay = double.Parse(values[AYCOL]);// * -1 ;
-            double Az = double.Parse(values[AZCOL]);// * -1 ;
+            double Ax = double.Parse(values[AXCOL]);
+            double Ay = double.Parse(values[AYCOL]);
+            double Az = double.Parse(values[AZCOL]);
 
             double Mx = double.Parse(values[MXCOL]);
             double My = double.Parse(values[MYCOL]);
             double Mz = double.Parse(values[MZCOL]);
 
-            MadgwickAHRSupdate(Gx, Gy, Gz, Ax, Ay, Az, Mx, My, Mz);
+            if (CalculateQuaternion == 1)
+            {
+                MadgwickAHRSupdate(Gx, Gy, Gz, Ax, Ay, Az, Mx, My, Mz);
+                GetGravity(q0, q1, q2, q3, out CalcGravX, out CalcGravY, out CalcGravZ);
+            }
+            else
+            {
+                GetGravity(double.Parse(values[Q0COL]), double.Parse(values[Q1COL]), double.Parse(values[Q2COL]), double.Parse(values[Q3COL]), out CalcGravX, out CalcGravY, out CalcGravZ);// out InvGravX, out InvGravY, out InvGravZ);
+            }
 
-            //GetGravity(q0, q1, q2, q3, out CalcGravX, out CalcGravY, out CalcGravZ);
-
-            GetGravity(double.Parse(values[Q0COL]), double.Parse(values[Q1COL]), double.Parse(values[Q2COL]), double.Parse(values[Q3COL]), out CalcGravX, out CalcGravY, out CalcGravZ);// out InvGravX, out InvGravY, out InvGravZ);
-
-
-            /* Gravity for Actigraph */
+            /* linear acceleration */
             lx = Ax - CalcGravX;
             ly = Ay - CalcGravY;
             lz = Az - CalcGravZ;
-
-            /* Axis manipulation for Actigraph */
-            //lz = lz * -1;
-            //double temp = -lx;
-            //lx = ly;
-            //ly = temp;
-
-            /* This is old rotation between Shimmer and iPhone */
-            ///* Removing gravity from Smoothed Signal */
-            ///* Data Port facing inside */
-            ///* RawData[0][Total_Data] = -(RawData[0][Total_Data] - gx);
-            //RawData[1][Total_Data] = -(RawData[1][Total_Data] - gy);
-            //RawData[2][Total_Data] = -(RawData[2][Total_Data] - gz); */
-
-            ///* Data Port Facing Outside */
-            //lx = -(Ax - CalcGravX);
-            //ly = -(Ay - CalcGravY);
-            //lz = -(Az - CalcGravZ);
-
-            /* move data around for correct axes orientation in shimmer vs the iphone*/
-            // if data port pointing away from hand. swap x and y
-            lz = -lz;
-            double temp = -lx;
-            lx = -ly;
-            ly = temp;
         }
 
         void MadgwickAHRSupdate(double gx, double gy, double gz, double ax, double ay, double az, double mx, double my, double mz)
@@ -196,17 +234,22 @@ namespace AHRSTEST
                 s2 = -_2q0 * (2.0f * q1q3 - _2q0q2 - ax) + _2q3 * (2.0f * q0q1 + _2q2q3 - ay) - 4.0f * q2 * (1 - 2.0f * q1q1 - 2.0f * q2q2 - az) + (-_4bx * q2 - _2bz * q0) * (_2bx * (0.5f - q2q2 - q3q3) + _2bz * (q1q3 - q0q2) - mx) + (_2bx * q1 + _2bz * q3) * (_2bx * (q1q2 - q0q3) + _2bz * (q0q1 + q2q3) - my) + (_2bx * q0 - _4bz * q2) * (_2bx * (q0q2 + q1q3) + _2bz * (0.5f - q1q1 - q2q2) - mz);
                 s3 = _2q1 * (2.0f * q1q3 - _2q0q2 - ax) + _2q2 * (2.0f * q0q1 + _2q2q3 - ay) + (-_4bx * q3 + _2bz * q1) * (_2bx * (0.5f - q2q2 - q3q3) + _2bz * (q1q3 - q0q2) - mx) + (-_2bx * q0 + _2bz * q2) * (_2bx * (q1q2 - q0q3) + _2bz * (q0q1 + q2q3) - my) + _2bx * q1 * (_2bx * (q0q2 + q1q3) + _2bz * (0.5f - q1q1 - q2q2) - mz);
 
-                recipNorm = 1 / Math.Sqrt(s0 * s0 + s1 * s1 + s2 * s2 + s3 * s3); // normalise step magnitude
+                recipNorm = (double)1.00 / (double)Math.Sqrt(s0 * s0 + s1 * s1 + s2 * s2 + s3 * s3); // normalise step magnitude
                 s0 *= recipNorm;
                 s1 *= recipNorm;
                 s2 *= recipNorm;
                 s3 *= recipNorm;
 
+                //QuatDebugger.Write(beta + "\t" + qDot1 + "\t" + s0 + "\t" + qDot2 + "\t" + s1 + "\t" + qDot3 + "\t" + s2 + "\t" + qDot4 + "\t" + s3 + "\t");
+                
                 // Apply feedback step
                 qDot1 -= beta * s0;
                 qDot2 -= beta * s1;
                 qDot3 -= beta * s2;
                 qDot4 -= beta * s3;
+
+                //QuatDebugger.Write(qDot1 + "\t" + qDot2 + "\t" + qDot3 + "\t" + qDot4 + "\t");
+
             }
 
             // Integrate rate of change of quaternion to yield quaternion
@@ -221,6 +264,10 @@ namespace AHRSTEST
             q1 *= recipNorm;
             q2 *= recipNorm;
             q3 *= recipNorm;
+
+            GetEuler(q0, q1, q2, q3, out CalcRoll, out CalcPitch, out CalcYaw);
+            QuatDebugger.WriteLine(CalcRoll + "\t" + CalcPitch + "\t" + CalcYaw);
+
         }
 
         //---------------------------------------------------------------------------------------------------
@@ -297,37 +344,158 @@ namespace AHRSTEST
         }
 
 
-        private void button1_Click(object sender, EventArgs e)
+        char SplitChar;
+        int DEBUGLEVEL;
+        double lx, ly, lz;
+        String OutputFileName;
+        StreamWriter QuatWriter;
+        StreamReader reader;
+        BinaryWriter DataWriter;
+
+        private void button2_Click(object sender, EventArgs e)
         {
-
-            label1.Text = "Waiting";
-            int DEBUGLEVEL = 0; /* 0 - Nothing to quats, 1 - only costheta, 2 - costheta and quaternions */
-
-            /* Setup Columns for Actigraph */
-            AXCOL = 1; AYCOL = 2; AZCOL = 3; GXCOL = 4; GYCOL = 5; GZCOL = 6; MXCOL = 7; MYCOL = 8; MZCOL = 9; Q3COL = Q2COL = Q1COL = Q0COL = 0; QT1 = QT2 = QT3 = QT0 = 0;
-
-            /* Setup Columns for Shimmer */
-            AXCOL = 10; AYCOL = 11; AZCOL = 12; GXCOL = 7; GYCOL = 8; GZCOL = 9; MXCOL = 13; MYCOL = 14; MZCOL = 15; Q0COL = 3; Q1COL = 4; Q2COL = 5; Q3COL = 6; QT1 = QT2 = QT3 = QT0 = 0;
-
-            /* Setup the split character */
-            char SplitChar = '\t';
-            
-            double CosTheta = 0;
-            double lx, ly, lz;
+            DEBUGLEVEL = cmbDebugLevel.SelectedIndex;
             int LineNumber = 0;
+            CurrentDevice = (Devices)System.Enum.Parse(typeof(Devices), cmbDevices.SelectedValue.ToString());
+            double[] Betas = { 0.8, 0.9, 1.0, 1.1, 1.2 };
+            label1.Text = "Waiting";
             var values = "Banana,Lemon,Pie".Split(SplitChar);
 
-            String OutputFileName = "C:\\temp\\P2001.txt";
-            StreamWriter QuatWriter = new StreamWriter("C:\\temp\\quats.txt");// Users\\Surya\\Dropbox\\Education\\Eating Detection\\Quats" + beta.ToString("N4") + ".txt");
+            OutputFileName = "C:\\temp\\P2001.txt";
+            QuatWriter = new StreamWriter("C:\\temp\\quats.txt");// Users\\Surya\\Dropbox\\Education\\Eating Detection\\Quats" + beta.ToString("N4") + ".txt");
+//            QuatDebugger = new StreamWriter("C:\\temp\\quatdebug.txt");// Users\\Surya\\Dropbox\\Education\\Eating Detection\\Quats" + beta.ToString("N4") + ".txt");
             OpenFileDialog openFileDialog1 = new OpenFileDialog();
-            StreamReader reader;
-            BinaryWriter DataWriter = new BinaryWriter(File.OpenWrite(OutputFileName));
 
             String InputFileName;
-            // Set filter options and filter index.
             openFileDialog1.Filter = "CSV Files (.csv)|*.csv|All Files (*.*)|*.*";
             openFileDialog1.FilterIndex = 1;
 
+            switch (CurrentDevice)
+            {
+                case Devices.Invensense:
+                    /* Setup Columns for Shimmer */
+                    AXCOL = 10; AYCOL = 11; AZCOL = 12; GXCOL = 7; GYCOL = 8; GZCOL = 9; MXCOL = 13; MYCOL = 14; MZCOL = 15; Q0COL = 3; Q1COL = 4; Q2COL = 5; Q3COL = 6; QT1 = QT2 = QT3 = QT0 = 0;
+                    /* Setup the split character */
+                    SplitChar = '\t';
+                    break;
+                case Devices.Actigraph:
+                    /* Setup Columns for Actigraph */
+                    AXCOL = 1; AYCOL = 2; AZCOL = 3; GXCOL = 4; GYCOL = 5; GZCOL = 6; MXCOL = 7; MYCOL = 8; MZCOL = 9; Q3COL = Q2COL = Q1COL = Q0COL = 0; QT1 = QT2 = QT3 = QT0 = 0;
+                    SplitChar = ',';
+                    break;
+                case Devices.iPhone:
+                    break;
+            }
+
+            //QuatDebugger.WriteLine("Beta\tQ0\tS0\tQ1\tS1\tQ2\tS2\tQ3\tS3\tYaw\tPitch\tRoll");
+
+            // Call the ShowDialog method to show the dialog box.
+            DialogResult userClickedOK = openFileDialog1.ShowDialog();
+
+            // Process input if the user clicked OK.
+            if (userClickedOK == DialogResult.OK)
+            {
+                InputFileName = openFileDialog1.FileName;
+
+
+                reader = new StreamReader(File.OpenRead(InputFileName));
+
+                /* Read first line with column titles */
+                var line = reader.ReadLine();
+
+                reader.Close();
+
+                if (CurrentDevice == Devices.Invensense)
+                {
+                    QT0 = double.Parse(values[Q0COL]);
+                    QT1 = double.Parse(values[Q1COL]);
+                    QT2 = double.Parse(values[Q2COL]);
+                    QT3 = double.Parse(values[Q3COL]);
+                }
+
+                for(int i = 0; i < Betas.Length; i++)
+                {
+                    q0 = 1;
+                    q1 = q2 = q3 = 0;
+                    beta = Betas[i];
+                    QuatDebugger = new StreamWriter("C:\\temp\\ActiGraphYPR" + beta.ToString("N4") +".txt");
+                    QuatDebugger.WriteLine("Roll\tPitch\tYaw");
+                    reader = new StreamReader(File.OpenRead(InputFileName));
+
+                    /* Read first line with column units */
+                    for(int j = 0; j<12; j++)
+                        line = reader.ReadLine();
+
+                    /* Read actual lines */
+                    while (true)
+                    {
+                        line = reader.ReadLine();
+                        if (reader.EndOfStream)
+                            break;
+
+                        if ((((LineNumber % 7) == 0) && (CurrentDevice == Devices.Actigraph)) || (CurrentDevice == Devices.Invensense))  /* Read only the 7th sample to resample from 100Hz to 15 Hz */
+                        {
+                            values = line.Split(SplitChar);
+
+                            CalculateLinear(values, out lx, out ly, out lz, 1);
+                        }
+
+
+                        if (LineNumber == 99) LineNumber = 0;
+                        else LineNumber++;
+                    }
+                    QuatDebugger.Close();
+                    reader.Close();
+                }
+
+            }
+
+            QuatWriter.Close();
+            
+            label1.Text = "Finished";
+
+
+        }
+
+        private void button1_Click(object sender, EventArgs e)
+        {
+            var values = "Banana,Lemon,Pie".Split(SplitChar);
+
+            label1.Text = "Waiting";
+            CurrentDevice = (Devices) System.Enum.Parse(typeof(Devices), cmbDevices.SelectedValue.ToString());
+            SplitChar = '\t';
+            DEBUGLEVEL = 0; /* 0 - Nothing to quats, 1 - only costheta, 2 - costheta and quaternions */
+            double CosTheta = 0;
+            beta = double.Parse(tbBetaVal.Text);
+            int LineNumber = 0;
+            
+            OutputFileName = "C:\\temp\\P2001.txt";
+            QuatWriter = new StreamWriter("C:\\temp\\quats.txt");// Users\\Surya\\Dropbox\\Education\\Eating Detection\\Quats" + beta.ToString("N4") + ".txt");
+            QuatDebugger = new StreamWriter(tbDebugFile.Text);// Users\\Surya\\Dropbox\\Education\\Eating Detection\\Quats" + beta.ToString("N4") + ".txt");
+            OpenFileDialog openFileDialog1 = new OpenFileDialog();
+            DataWriter = new BinaryWriter(File.OpenWrite(OutputFileName));
+
+            String InputFileName;
+            openFileDialog1.Filter = "CSV Files (.csv)|*.csv|All Files (*.*)|*.*";
+            openFileDialog1.FilterIndex = 1;
+
+            switch (CurrentDevice)
+            {
+                case Devices.Invensense:
+                    /* Setup Columns for Shimmer */
+                    AXCOL = 10; AYCOL = 11; AZCOL = 12; GXCOL = 7; GYCOL = 8; GZCOL = 9; MXCOL = 13; MYCOL = 14; MZCOL = 15; Q0COL = 3; Q1COL = 4; Q2COL = 5; Q3COL = 6; QT1 = QT2 = QT3 = QT0 = 0;
+                    /* Setup the split character */
+                    SplitChar = '\t';
+                    break;
+                case Devices.Actigraph:
+                    /* Setup Columns for Actigraph */
+                    AXCOL = 1; AYCOL = 2; AZCOL = 3; GXCOL = 4; GYCOL = 5; GZCOL = 6; MXCOL = 7; MYCOL = 8; MZCOL = 9; Q3COL = Q2COL = Q1COL = Q0COL = 0; QT1 = QT2 = QT3 = QT0 = 0;
+                    SplitChar = ',';
+                    break;
+                case Devices.iPhone:
+                    break;
+            }
+            
             switch(DEBUGLEVEL)
             {
                 case 1: QuatWriter.WriteLine("CosTheta");
@@ -339,7 +507,8 @@ namespace AHRSTEST
                     break;
                 default: break;
             }
-            
+
+            QuatDebugger.WriteLine("tQ0\tS0\tQ1\tS1\tQ2\tS2\tQ3\tS3\tYaw\tPitch\tRoll");
 
             // Call the ShowDialog method to show the dialog box.
             DialogResult userClickedOK = openFileDialog1.ShowDialog();
@@ -371,16 +540,13 @@ namespace AHRSTEST
 
                 values = line.Split(SplitChar);
 
-                if (Q0COL != 0)
+                if (CurrentDevice == Devices.Invensense)
                 {
                     QT0 = double.Parse(values[Q0COL]);
                     QT1 = double.Parse(values[Q1COL]);
                     QT2 = double.Parse(values[Q2COL]);
                     QT3 = double.Parse(values[Q3COL]);
                 }
-
-
-                bool condition = true; // Shimmmer
                 
                 /* Read actual lines */
                 while (true)
@@ -389,13 +555,11 @@ namespace AHRSTEST
                     if (reader.EndOfStream)
                         break;
 
-                    //condition = ((LineNumber % 7) == 0); // Actigraph
-
-                    if (condition)  /* Read only the 7th sample to resample from 100Hz to 15 Hz */
+                    if ( ( ( ( LineNumber % 7) == 0) && (CurrentDevice == Devices.Actigraph)) || (CurrentDevice == Devices.Invensense))  /* Read only the 7th sample to resample from 100Hz to 15 Hz */
                     {
                         values = line.Split(SplitChar);
 
-                        if (Q0COL != 0)
+                        if (CurrentDevice == Devices.Invensense)
                         {
                             QT0 = double.Parse(values[Q0COL]);
                             QT1 = double.Parse(values[Q1COL]);
@@ -403,17 +567,12 @@ namespace AHRSTEST
                             QT3 = double.Parse(values[Q3COL]);
                         }
 
-                        CalculateLinear(values, out lx, out ly, out lz);
+                        CalculateLinear(values, out lx, out ly, out lz, 1);
 
-                        /* Actigraph rotation axis manipulation */
-                        //Gz = Gz * -1;
-                        //CosTheta = -Gx;
-                        //Gx = Gy;
-                        //Gy = CosTheta;
+                        OrientAxes(CurrentDevice, ref lx, ref ly, ref lz, ref Gx, ref Gy, ref Gz);
 
                         if(DEBUGLEVEL == 2) CosTheta = (q0 * QT0) + (q1 * QT1) + (q2 * QT2) + (q3 * QT3);
                         
-
                         DataWriter.Write((float)lx);
                         DataWriter.Write((float)ly);
                         DataWriter.Write((float)lz);
@@ -449,6 +608,7 @@ namespace AHRSTEST
 
             DataWriter.Close();
             QuatWriter.Close();
+            QuatDebugger.Close();
             label1.Text = "Finished";
             }
     }
